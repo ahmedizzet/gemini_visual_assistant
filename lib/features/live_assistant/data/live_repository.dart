@@ -15,52 +15,56 @@ class LiveAssistantRepository {
     required this.onInterrupted,
     required this.onSpeechReceived,
   }) {
-    _model = FirebaseAI.googleAI().liveGenerativeModel(
-      model: ApiConstants.geminiModel,
-      liveGenerationConfig: LiveGenerationConfig(
-        responseModalities: [ResponseModalities.audio],
-        speechConfig: SpeechConfig(voiceName: ApiConstants.voiceName),
-      ),
-      systemInstruction: Content.system(
-        "You are 'Aim', a real-time visual guide for the blind. Proactively describe obstacles, doorways, and people concisely (e.g., 'Curb ahead'). If the user speaks, STOP your audio immediately. You are a listener first.",
-      ),
-    );
+
+    // _model = FirebaseAI.googleAI().liveGenerativeModel(
+    //   model: ApiConstants.geminiModel,
+    //   liveGenerationConfig: LiveGenerationConfig(
+    //     responseModalities: [ResponseModalities.audio],
+    //     speechConfig: SpeechConfig(voiceName: ApiConstants.voiceName),
+    //   ),
+    //   systemInstruction: Content.system(
+    //     "You are 'Aim', a real-time visual guide for the blind. Proactively describe obstacles, doorways, and people concisely (e.g., 'Curb ahead'). If the user speaks, STOP your audio immediately. You are a listener first.",
+    //   ),
+    // );
   }
 
   Future<void> startAim() async {
     try {
       _session = await _model.connect();
+      print("Connected to Aim");
 
-      _subscription = _session?.receive().listen(
-        (response) {
-          final message = response.message;
 
-          // Handle Interruption (Barge-in Logic)
-          if (message is LiveServerContent && message.interrupted == true) {
-            onInterrupted(true);
-          }
 
-          // Extract text if the model provides text chunks alongside audio
-          if (message is LiveServerContent && message.modelTurn != null) {
-            final text = message.modelTurn!.parts
-                .whereType<TextPart>()
-                .map((p) => p.text)
-                .join();
-
-            if (text.isNotEmpty) {
-              onSpeechReceived(text);
-            }
-          }
-        },
-        onError: (error) {
-          debugPrint("Live Session Error: $error");
-          stopAim();
-        },
-        onDone: () {
-          debugPrint("Live Session Closed");
-          stopAim();
-        },
-      );
+      // _subscription = _session?.receive().listen(
+      //   (response) {
+      //     final message = response.message;
+      //
+      //     // Handle Interruption (Barge-in Logic)
+      //     if (message is LiveServerContent && message.interrupted == true) {
+      //       onInterrupted(true);
+      //     }
+      //
+      //     // Extract text if the model provides text chunks alongside audio
+      //     if (message is LiveServerContent && message.modelTurn != null) {
+      //       final text = message.modelTurn!.parts
+      //           .whereType<TextPart>()
+      //           .map((p) => p.text)
+      //           .join();
+      //
+      //       if (text.isNotEmpty) {
+      //         onSpeechReceived(text);
+      //       }
+      //     }
+      //   },
+      //   onError: (error) {
+      //     debugPrint("Live Session Error: $error");
+      //     stopAim();
+      //   },
+      //   onDone: () {
+      //     debugPrint("Live Session Closed");
+      //     stopAim();
+      //   },
+      // );
 
       // No startAudioConversation() in this version.
       // Modality AUDIO triggers automatic bidirectional audio if configured.

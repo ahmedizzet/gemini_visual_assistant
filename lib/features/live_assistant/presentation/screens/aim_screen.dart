@@ -1,4 +1,5 @@
 import 'package:camera/camera.dart';
+import 'package:firebase_ai/firebase_ai.dart';
 import 'package:flutter/material.dart';
 import '../../../../services/camera_service.dart';
 import '../../data/live_repository.dart';
@@ -16,6 +17,47 @@ class _AimScreenState extends State<AimScreen> {
   bool _isAiming = false;
   String _lastSpeech = "Tap below to start Aim";
 
+  Future<void> _testGemini() async {
+    try {
+      final model = FirebaseAI.googleAI().generativeModel(model: 'gemini-3-flash-preview');
+
+      if (_cameraService.controller == null || !_cameraService.controller!.value.isInitialized) {
+        setState(() => _lastSpeech = "Camera not ready");
+        return;
+      }
+
+      setState(() => _lastSpeech = "Capturing image...");
+      
+      // 1. Capture the image from the camera
+      final XFile image = await _cameraService.controller!.takePicture();
+      final bytes = await image.readAsBytes();
+
+      // 2. Prepare the multi-modal prompt (Text + Image)
+      final prompt = [
+        Content.multi([
+          TextPart('Describe what is in this image concisely for a blind person.'),
+          InlineDataPart('image/jpeg', bytes),
+        ])
+      ];
+
+      setState(() => _lastSpeech = "Analyzing image...");
+
+      // 3. Generate content
+      final response = await model.generateContent(prompt);
+      final text = response.text;
+
+      if (text != null) {
+        setState(() => _lastSpeech = text);
+        print("===> Gemini Response: $text");
+      } else {
+        setState(() => _lastSpeech = "Could not describe the image.");
+      }
+    } catch (e) {
+      debugPrint("Test Gemini Error: $e");
+      setState(() => _lastSpeech = "Error: $e");
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -23,8 +65,6 @@ class _AimScreenState extends State<AimScreen> {
       onInterrupted: (interrupted) {
         if (interrupted) {
           debugPrint("Interrupted! Model should stop audio.");
-          // The API handles audio stopping internally when interrupted is true,
-          // but we can update UI or local state here if needed.
         }
       },
       onSpeechReceived: (text) {
@@ -49,11 +89,17 @@ class _AimScreenState extends State<AimScreen> {
   }
 
   void _toggleAim() async {
+    // Triggering the vision test
+    await _testGemini();
+
+    // Original live logic commented out
+    /*
     if (_isAiming) {
       _stopAiming();
     } else {
       _startAiming();
     }
+    */
   }
 
   void _startAiming() async {
@@ -150,7 +196,7 @@ class _AimScreenState extends State<AimScreen> {
                     size: 40,
                   ),
                   label: Text(
-                    _isAiming ? "STOP AIM" : "START AIM",
+                    _isAiming ? "START AIM" : "START AIM",
                     style: const TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
