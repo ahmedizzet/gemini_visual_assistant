@@ -1,6 +1,7 @@
 import 'package:camera/camera.dart';
 import 'package:firebase_ai/firebase_ai.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import '../../../../services/camera_service.dart';
 import '../../data/live_repository.dart';
 
@@ -13,6 +14,7 @@ class AimScreen extends StatefulWidget {
 
 class _AimScreenState extends State<AimScreen> {
   final CameraService _cameraService = CameraService();
+  final FlutterTts _flutterTts = FlutterTts();
   late final LiveAssistantRepository _liveRepository;
   bool _isAiming = false;
   String _lastSpeech = "Tap below to start Aim";
@@ -35,7 +37,7 @@ class _AimScreenState extends State<AimScreen> {
       // 2. Prepare the multi-modal prompt (Text + Image)
       final prompt = [
         Content.multi([
-          TextPart('Describe what is in this image concisely for a blind person.'),
+          TextPart('You are a blind persons eyes, very briefly describe the image.'),
           InlineDataPart('image/jpeg', bytes),
         ])
       ];
@@ -49,6 +51,7 @@ class _AimScreenState extends State<AimScreen> {
       if (text != null) {
         setState(() => _lastSpeech = text);
         print("===> Gemini Response: $text");
+        await _flutterTts.speak(text); // Speak the response text
       } else {
         setState(() => _lastSpeech = "Could not describe the image.");
       }
@@ -102,43 +105,44 @@ class _AimScreenState extends State<AimScreen> {
     */
   }
 
-  void _startAiming() async {
-    try {
-      setState(() {
-        _isAiming = true;
-        _lastSpeech = "Aim is starting...";
-      });
+  // void _startAiming() async {
+  //   try {
+  //     setState(() {
+  //       _isAiming = true;
+  //       _lastSpeech = "Aim is starting...";
+  //     });
+  //
+  //     await _liveRepository.startAim();
+  //
+  //     _cameraService.startImageStream((frame) {
+  //       _liveRepository.sendVisionFrame(frame);
+  //     });
+  //
+  //     setState(() => _lastSpeech = "Aim is listening and watching.");
+  //   } catch (e) {
+  //     _stopAiming();
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(
+  //         context,
+  //       ).showSnackBar(SnackBar(content: Text("Failed to start Aim: $e")));
+  //     }
+  //   }
+  // }
 
-      await _liveRepository.startAim();
-
-      _cameraService.startImageStream((frame) {
-        _liveRepository.sendVisionFrame(frame);
-      });
-
-      setState(() => _lastSpeech = "Aim is listening and watching.");
-    } catch (e) {
-      _stopAiming();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Failed to start Aim: $e")));
-      }
-    }
-  }
-
-  void _stopAiming() {
-    _cameraService.stopImageStream();
-    _liveRepository.stopAim();
-    setState(() {
-      _isAiming = false;
-      _lastSpeech = "Aim stopped. Tap to restart.";
-    });
-  }
+  // void _stopAiming() {
+  //   _cameraService.stopImageStream();
+  //   _liveRepository.stopAim();
+  //   setState(() {
+  //     _isAiming = false;
+  //     _lastSpeech = "Aim stopped. Tap to restart.";
+  //   });
+  // }
 
   @override
   void dispose() {
     _cameraService.dispose();
     _liveRepository.stopAim();
+    _flutterTts.stop(); // Stop any speech when disposing
     super.dispose();
   }
 
@@ -196,7 +200,7 @@ class _AimScreenState extends State<AimScreen> {
                     size: 40,
                   ),
                   label: Text(
-                    _isAiming ? "START AIM" : "START AIM",
+                    _isAiming ? "STOP AIM" : "START AIM",
                     style: const TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
