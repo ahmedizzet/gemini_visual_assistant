@@ -1,8 +1,14 @@
+import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:firebase_ai/firebase_ai.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+// Your custom service imports
 import '../../../../services/camera_service.dart';
-import '../../data/live_repository.dart';
+import '../../../../services/audio_handler.dart';
+import '../../../../core/constants/api_constants.dart';
 
 class AimScreen extends StatefulWidget {
   const AimScreen({super.key});
@@ -13,139 +19,187 @@ class AimScreen extends StatefulWidget {
 
 class _AimScreenState extends State<AimScreen> {
   final CameraService _cameraService = CameraService();
-  late final LiveAssistantRepository _liveRepository;
+  final AudioHandler _audioHandler = AudioHandler();
+
+  // Session State
+  LiveSession? _testSession;
+  StreamSubscription? _sessionSubscription;
+  
+  // Logic Flags
   bool _isAiming = false;
+  bool _isCameraStreaming = false;
+  bool _isModelBusy = false;
+  
+  // Throttling
+  DateTime _lastFrameSent = DateTime.now();
+  final int _visionIntervalMs = 3000; // 3 Seconds for vision stability
+
   String _lastSpeech = "Tap below to start Aim";
 
-  Future<void> _testGemini() async {
+  /// 1. Initialize the Live Session
+  Future<void> _startGeminiLive() async {
     try {
-      final model = FirebaseAI.googleAI().generativeModel(model: 'gemini-3-flash-preview');
+      setState(() => _lastSpeech = "Connecting to Aim...");
 
-      if (_cameraService.controller == null || !_cameraService.controller!.value.isInitialized) {
-        setState(() => _lastSpeech = "Camera not ready");
+      final model = FirebaseAI.googleAI().liveGenerativeModel(
+        model: ApiConstants.geminiModel, // e.g., 'gemini-2.5-flash-native-audio'
+        liveGenerationConfig: LiveGenerationConfig(
+          responseModalities: [ResponseModalities.audio],
+          outputAudioTranscription: AudioTranscriptionConfig(), // Crucial for text + audio sync
+          speechConfig: SpeechConfig(voiceName: ApiConstants.voiceName),
+        ),
+        systemInstruction: Content.system(
+          "You are 'Aim', a real-time visual assistant for the blind. "
+          "You will receive vision frames every 3 seconds. "
+          "IMPORTANT: Do not wait for user prompts. If you see a change or a hazard, "
+          "speak immediately. Be proactive and concise."
+        ),
+      );
+
+      // Check Permissions
+      if (await Permission.camera.request().isDenied) {
+        _updateStatus("Camera permission required.");
         return;
       }
 
-      setState(() => _lastSpeech = "Capturing image...");
-      
-      // 1. Capture the image from the camera
-      final XFile image = await _cameraService.controller!.takePicture();
-      final bytes = await image.readAsBytes();
+      // Establish Connection
+      _testSession = await model.connect();
 
-      // 2. Prepare the multi-modal prompt (Text + Image)
-      final prompt = [
-        Content.multi([
-          TextPart('Describe what is in this image concisely for a blind person.'),
-          InlineDataPart('image/jpeg', bytes),
-        ])
-      ];
+      // 2. The Main Listener Loop
+      _sessionSubscription = _testSession?.receive().listen((response) {
+        final message = response.message;
+        debugPrint("####>>> Server Message: ${message.runtimeType}");
 
-      setState(() => _lastSpeech = "Analyzing image...");
+        // A. HANDLE SETUP (The key to fixing "sees once")
+        // Since LiveServerSetup is not exported, we use a structural check
+        if (message is! LiveServerContent &&
+            message is! LiveServerToolCall &&
+            message is! LiveServerToolCallCancellation) {
+          debugPrint("####>>> SETUP SUCCESS: Activating Vision Loop.");
+          _activateVisionLoop();
+        }
 
-      // 3. Generate content
-      final response = await model.generateContent(prompt);
-      final text = response.text;
+        // B. HANDLE CONTENT & STATE
+        if (message is LiveServerContent) {
+          // Update Thinking State
+          setState(() => _isModelBusy = message.modelTurn != null && !(message.turnComplete ?? false));
 
-      if (text != null) {
-        setState(() => _lastSpeech = text);
-        print("===> Gemini Response: $text");
-      } else {
-        setState(() => _lastSpeech = "Could not describe the image.");
-      }
+          // Handle Interruption (Barge-in)
+          if (message.interrupted == true) {
+            _audioHandler.stopAll();
+            setState(() => _isModelBusy = false);
+          }
+
+          // Handle Model Turn (Audio + Text)
+          if (message.modelTurn != null) {
+            for (final part in message.modelTurn!.parts) {
+              if (part is TextPart && part.text.isNotEmpty) {
+                _updateStatus(part.text);
+              }
+              if (part is InlineDataPart && part.mimeType.startsWith('audio/')) {
+                _audioHandler.playAudioChunk(part.bytes);
+              }
+            }
+          }
+          
+          // Fallback for Transcription
+          if (message.outputTranscription?.text != null) {
+            _updateStatus(message.outputTranscription!.text!);
+          }
+        }
+      }, onError: (e) {
+        debugPrint("Session Error: $e");
+        _stopAiming();
+      });
+
+      _updateStatus("Aim is ready.");
     } catch (e) {
-      debugPrint("Test Gemini Error: $e");
-      setState(() => _lastSpeech = "Error: $e");
+      _updateStatus("Connection Error: $e");
+      _stopAiming();
     }
+  }
+
+  /// 3. Continuous Vision Loop (Fixes "Blindness")
+  void _activateVisionLoop() {
+    if (_isCameraStreaming) return;
+    _isCameraStreaming = true;
+
+    _cameraService.startImageStream((Uint8List jpegFrame) {
+      final now = DateTime.now();
+      
+      // Throttle to 3 seconds
+      if (now.difference(_lastFrameSent).inMilliseconds >= _visionIntervalMs) {
+        _lastFrameSent = now;
+
+        // Only send if the session is alive and model is not busy
+        if (_testSession != null) {
+          debugPrint("####>>> Sending Vision Frame (${jpegFrame.length} bytes)");
+          _testSession?.sendVideoRealtime(InlineDataPart('image/jpeg', jpegFrame));
+        }
+      }
+    });
+  }
+
+  /// 4. Cleanup & Stop
+  void _stopAiming() {
+    _cameraService.stopImageStream();
+    _isCameraStreaming = false;
+    _audioHandler.stopAll();
+    _sessionSubscription?.cancel();
+    _testSession?.close();
+    _testSession = null;
+    
+    if (mounted) {
+      setState(() {
+        _isAiming = false;
+        _isModelBusy = false;
+        _lastSpeech = "Aim stopped.";
+      });
+    }
+  }
+
+  void _toggleAim() {
+    if (_isAiming) {
+      _stopAiming();
+    } else {
+      setState(() => _isAiming = true);
+      _startGeminiLive();
+    }
+  }
+
+  void _updateStatus(String msg) {
+    if (mounted) setState(() => _lastSpeech = msg);
   }
 
   @override
   void initState() {
     super.initState();
-    _liveRepository = LiveAssistantRepository(
-      onInterrupted: (interrupted) {
-        if (interrupted) {
-          debugPrint("Interrupted! Model should stop audio.");
-        }
-      },
-      onSpeechReceived: (text) {
-        setState(() => _lastSpeech = text);
-      },
-    );
+    _audioHandler.init();
     _initializeCamera();
   }
 
   Future<void> _initializeCamera() async {
     try {
       await _cameraService.initialize();
-      setState(() {});
+      if (mounted) setState(() {});
     } catch (e) {
-      debugPrint("Camera initialization failed: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Camera Error: $e")));
-      }
+      debugPrint("Init Error: $e");
     }
-  }
-
-  void _toggleAim() async {
-    // Triggering the vision test
-    await _testGemini();
-
-    // Original live logic commented out
-    /*
-    if (_isAiming) {
-      _stopAiming();
-    } else {
-      _startAiming();
-    }
-    */
-  }
-
-  void _startAiming() async {
-    try {
-      setState(() {
-        _isAiming = true;
-        _lastSpeech = "Aim is starting...";
-      });
-
-      await _liveRepository.startAim();
-
-      _cameraService.startImageStream((frame) {
-        _liveRepository.sendVisionFrame(frame);
-      });
-
-      setState(() => _lastSpeech = "Aim is listening and watching.");
-    } catch (e) {
-      _stopAiming();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Failed to start Aim: $e")));
-      }
-    }
-  }
-
-  void _stopAiming() {
-    _cameraService.stopImageStream();
-    _liveRepository.stopAim();
-    setState(() {
-      _isAiming = false;
-      _lastSpeech = "Aim stopped. Tap to restart.";
-    });
   }
 
   @override
   void dispose() {
+    _stopAiming();
     _cameraService.dispose();
-    _liveRepository.stopAim();
+    _audioHandler.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_cameraService.controller == null ||
-        !_cameraService.controller!.value.isInitialized) {
+    final isInitialized = _cameraService.controller?.value.isInitialized ?? false;
+
+    if (!isInitialized) {
       return const Scaffold(
         backgroundColor: Colors.black,
         body: Center(child: CircularProgressIndicator(color: Colors.yellow)),
@@ -156,14 +210,11 @@ class _AimScreenState extends State<AimScreen> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Background: Camera Preview
           CameraPreview(_cameraService.controller!),
 
-          // Foreground: High-contrast overlay for speech and interaction
+          // Descriptive Overlay
           Positioned(
-            top: 60,
-            left: 20,
-            right: 20,
+            top: 60, left: 20, right: 20,
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -171,15 +222,22 @@ class _AimScreenState extends State<AimScreen> {
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.yellow, width: 2),
               ),
-              child: Text(
-                _lastSpeech,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyLarge,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 150),
+                child: SingleChildScrollView(
+                  child: Text(
+                    _isModelBusy ? "Aim is thinking..." : _lastSpeech,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: _isModelBusy ? Colors.yellow : Colors.white,
+                        ),
+                  ),
+                ),
               ),
             ),
           ),
 
-          // Massive interactive zone at the bottom
+          // Control Button
           Align(
             alignment: Alignment.bottomCenter,
             child: Padding(
@@ -190,18 +248,9 @@ class _AimScreenState extends State<AimScreen> {
                 child: FloatingActionButton.extended(
                   onPressed: _toggleAim,
                   backgroundColor: _isAiming ? Colors.red : Colors.green,
-                  foregroundColor: Colors.white,
-                  icon: Icon(
-                    _isAiming ? Icons.stop : Icons.play_arrow,
-                    size: 40,
-                  ),
-                  label: Text(
-                    _isAiming ? "START AIM" : "START AIM",
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  icon: Icon(_isAiming ? Icons.stop : Icons.play_arrow, size: 40),
+                  label: Text(_isAiming ? "STOP AIM" : "START AIM", 
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                 ),
               ),
             ),

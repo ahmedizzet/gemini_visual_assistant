@@ -10,6 +10,6 @@ class ApiConstants {
   static const String voiceName = 'Kore';
 
   // Vision Settings
-  static const int frameRate = 1; // 1 Frame Per Second is the API standard
-  static const double imageQuality = 50.0; // JPEG quality (0-100)
+  static const double frameRate = 0.333; // 1 Frame every 3 seconds
+  static const double imageQuality = 30.0; // JPEG quality (0-100)
 }

@@ -8,6 +8,8 @@ plugins {
 android {
     namespace = "com.gemini_visual_assistant.app"
     compileSdk = 36
+    // Use a specific NDK version that is installed and working
+    // If you don't have this exact version, you may need to download it via Android Studio SDK Manager
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
