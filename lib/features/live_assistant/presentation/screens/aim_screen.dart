@@ -18,6 +18,7 @@ class _AimScreenState extends State<AimScreen> {
   final FlutterTts _flutterTts = FlutterTts();
   late final LiveAssistantRepository _liveRepository;
   bool _isThinking = false;
+  Timer? _thinkingTimer;
   String _lastSpeech =
       "welcome to AIM, your gemini powered visual assistant. double tap the screen for me to describe what is in front of you";
 
@@ -48,6 +49,22 @@ class _AimScreenState extends State<AimScreen> {
     }
   }
 
+  void _startThinkingFeedback() {
+    _flutterTts.speak("Thinking");
+    _thinkingTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (_isThinking) {
+        _flutterTts.speak("Thinking");
+      } else {
+        timer.cancel();
+      }
+    });
+  }
+
+  void _stopThinkingFeedback() {
+    _thinkingTimer?.cancel();
+    _thinkingTimer = null;
+  }
+
   Future<void> _analyzeCurrentView() async {
     if (_isThinking) return;
 
@@ -57,6 +74,7 @@ class _AimScreenState extends State<AimScreen> {
       if (_cameraService.controller == null ||
           !_cameraService.controller!.value.isInitialized) {
         setState(() => _lastSpeech = "Camera not ready");
+        await _flutterTts.speak("Camera not ready");
         return;
       }
 
@@ -65,26 +83,33 @@ class _AimScreenState extends State<AimScreen> {
       final bytes = await image.readAsBytes();
 
       setState(() => _lastSpeech = "Thinking...");
+      _startThinkingFeedback();
+
       final text = await _liveRepository.analyzeImage(bytes);
+
+      _stopThinkingFeedback();
+      await _flutterTts.stop(); // Stop any remaining "Thinking" audio
 
       if (text != null) {
         setState(() => _lastSpeech = text);
-        await _flutterTts.stop();
-        
+
         // Trigger vibration if danger is detected
-        if (text.toLowerCase().contains("warning") || 
+        if (text.toLowerCase().contains("warning") ||
             text.toLowerCase().contains("danger") ||
             text.toLowerCase().contains("caution")) {
           _vibrate();
         }
-        
+
         await _flutterTts.speak(text);
       } else {
         setState(() => _lastSpeech = "Could not describe the image.");
+        await _flutterTts.speak("Could not describe the image.");
       }
     } catch (e) {
       debugPrint("Analysis Error: $e");
+      _stopThinkingFeedback();
       setState(() => _lastSpeech = "Error occurred.");
+      await _flutterTts.speak("Error occurred.");
     } finally {
       setState(() => _isThinking = false);
     }
@@ -101,7 +126,7 @@ class _AimScreenState extends State<AimScreen> {
     if (!_isThinking) {
       _analyzeCurrentView();
     } else {
-      setState(() => _lastSpeech = "Model is busy...");
+      _flutterTts.speak("Still thinking, please wait");
     }
   }
 
@@ -112,6 +137,7 @@ class _AimScreenState extends State<AimScreen> {
 
   @override
   void dispose() {
+    _stopThinkingFeedback();
     _cameraService.dispose();
     _flutterTts.stop();
     super.dispose();

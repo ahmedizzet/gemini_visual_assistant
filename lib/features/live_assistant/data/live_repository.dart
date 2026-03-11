@@ -21,6 +21,7 @@ class LiveAssistantRepository {
 
 Rules:
 - Be very brief (1 sentence maximum).
+- Describe using clock-face directions (e.g., "Door at 12 o'clock") instead of wordy sentences.
 - Focus only on the main action or event.
 - Mention only important objects or people.
 - Give estimated distance of objects or people from the camera
