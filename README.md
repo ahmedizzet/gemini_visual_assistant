@@ -1,17 +1,15 @@
 # gemini_visual_assistant
 
-A new Flutter project.
 
-## Getting Started
+**Goal:** Create a simple, modern landing page website to demonstrate a new app called **"Aim"** for the [Gemini Live Agent Challenge](https://geminiliveagentchallenge.devpost.com/rules).
 
-This project is a starting point for a Flutter application.
+## App Details: "Aim"
 
-A few resources to get you started if this is your first Flutter project:
+Aim is a specialized real-time visual companion built as a mobile app (Flutter) for users with visual impairments. It acts as their eyes to provide high-confidence, low-latency spatial descriptions.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+**Key Features to Highlight:**
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- **Powered by Gemini Live API:** Uses Google Cloud to process a real-time image from the camera when the user double taps the screen.
+- **Safety First:** Proactively alerts users with vibrations to immediate hazards (e.g., "Step down ahead," "Vehicle approaching").
+- **Concision & Speed:** Provides "blink-speed" descriptions using clock-face directions (e.g., "Door at 12 o'clock") instead of wordy sentences.
+- **Voice & Tone:** Uses native text-to-speech library.
